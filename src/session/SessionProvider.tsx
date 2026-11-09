@@ -2,7 +2,7 @@ import { useEffect, type PropsWithChildren } from 'react';
 import { AppState, View } from 'react-native';
 
 import { isWeb } from '../storage/backends';
-import { hydrateSessions, maintainSessions, markActive, useSessions } from './sessions';
+import { followOtherTabs, hydrateSessions, maintainSessions, markActive, useSessions } from './sessions';
 
 const MAINTENANCE_INTERVAL_MS = 30_000;
 const WEB_INPUT_EVENTS = ['pointerdown', 'keydown', 'wheel'] as const;
@@ -30,7 +30,11 @@ export function SessionProvider({ children }: PropsWithChildren) {
     if (!isWeb) return;
     const onInput = () => markActive();
     WEB_INPUT_EVENTS.forEach((event) => window.addEventListener(event, onInput, { capture: true, passive: true }));
-    return () => WEB_INPUT_EVENTS.forEach((event) => window.removeEventListener(event, onInput, { capture: true }));
+    const stopFollowing = followOtherTabs();
+    return () => {
+      WEB_INPUT_EVENTS.forEach((event) => window.removeEventListener(event, onInput, { capture: true }));
+      stopFollowing();
+    };
   }, []);
 
   if (!hydrated) return null;

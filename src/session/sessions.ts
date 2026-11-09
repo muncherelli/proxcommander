@@ -11,11 +11,11 @@ import {
 import type { PveVersion } from '../proxmox/types';
 import { queryClient } from '../query/client';
 import { pveKeys } from '../query/keys';
-import { findCluster, findLogin, profilesHydrated, useProfiles } from '../state/profiles';
+import { findCluster, findLogin, isLoginPersisted, profilesHydrated, useProfiles } from '../state/profiles';
 import { isWeb, type Persistence } from '../storage/backends';
 import { loadLoginSecret, saveLoginSecret } from '../storage/secrets';
 import { expiryReason, shouldRenewTicket, type SessionEndReason, type SessionPolicy } from './policy';
-import { eraseSession, readSessions, writeSession } from './vault';
+import { eraseSession, readSessions, SESSION_KEY_PREFIX, writeSession } from './vault';
 
 /** A signed-in login. At most one per login; any number of logins at once. */
 export interface Session {
@@ -52,7 +52,7 @@ export function useSession(loginId: string): Session | undefined {
  */
 function effectivePersistence(login: Login, cluster: Cluster, auth: PveAuth): Persistence {
   if (isWeb && auth.type === 'token') return 'memory';
-  if (!cluster.rememberHostnames || !login.rememberUsername) return 'memory';
+  if (!isLoginPersisted(login, cluster)) return 'memory';
   return login.sessionPolicy.persistence;
 }
 
@@ -103,7 +103,12 @@ export async function signIn(loginId: string, secret: string, continueFrom?: Ses
     endpointId = checked.endpointId;
   }
 
-  if (login.rememberSecret) await saveLoginSecret(loginId, secret);
+  // The login may have changed or the session ended while the network call ran.
+  const current = profileFor(loginId);
+  if (continueFrom && !useSessions.getState().sessions[loginId]) throw new Error('Session ended during sign-in');
+  if (current.login.rememberSecret && isLoginPersisted(current.login, current.cluster)) {
+    await saveLoginSecret(loginId, secret);
+  }
 
   const session: Session = {
     loginId,
@@ -111,8 +116,8 @@ export async function signIn(loginId: string, secret: string, continueFrom?: Ses
     endpointId,
     auth,
     userId: serverUserId,
-    persistence: effectivePersistence(login, cluster, auth),
-    policy: login.sessionPolicy,
+    persistence: effectivePersistence(current.login, current.cluster, auth),
+    policy: current.login.sessionPolicy,
     startedAt: continueFrom?.startedAt ?? now,
     ticketIssuedAt: auth.type === 'ticket' ? now : undefined,
     lastActiveAt: now,
@@ -121,20 +126,48 @@ export async function signIn(loginId: string, secret: string, continueFrom?: Ses
   return session;
 }
 
-export function signOut(loginId: string, reason: SessionEndReason = 'signed-out'): void {
-  if (!useSessions.getState().sessions[loginId]) return;
+/** Drops a session from this app instance only; storage is left to the caller. */
+function forget(loginId: string, reason: SessionEndReason): boolean {
+  if (!useSessions.getState().sessions[loginId]) return false;
   useSessions.setState((state) => {
     const { [loginId]: _ended, ...sessions } = state.sessions;
     return { sessions, lastEnded: { loginId, reason } };
   });
-  void eraseSession(loginId);
   queryClient.removeQueries({ queryKey: pveKeys.login(loginId) });
+  return true;
+}
+
+export function signOut(loginId: string, reason: SessionEndReason = 'signed-out'): void {
+  if (forget(loginId, reason)) void eraseSession(loginId);
+}
+
+/**
+ * Web: browser-stored sessions are shared by every tab. Mirror other tabs'
+ * sign-outs and renewals here, so this tab never writes a dead ticket back.
+ */
+export function followOtherTabs(): () => void {
+  const onStorage = (event: StorageEvent) => {
+    if (event.storageArea !== window.localStorage || !event.key?.startsWith(SESSION_KEY_PREFIX)) return;
+    const loginId = event.key.slice(SESSION_KEY_PREFIX.length);
+    if (event.newValue == null) {
+      forget(loginId, 'signed-out');
+      return;
+    }
+    try {
+      const session = JSON.parse(event.newValue) as Session;
+      if (session.loginId === loginId && findLogin(loginId)) {
+        useSessions.setState((state) => ({ sessions: { ...state.sessions, [loginId]: session } }));
+      }
+    } catch {}
+  };
+  window.addEventListener('storage', onStorage);
+  return () => window.removeEventListener('storage', onStorage);
 }
 
 /** Signs in again with a keychain-stored secret (native only). */
 async function reauthenticate(session: Session): Promise<boolean> {
   const login = findLogin(session.loginId);
-  if (!login?.rememberSecret) return false;
+  if (!session.policy.autoRenew || !login?.rememberSecret) return false;
   const secret = await loadLoginSecret(session.loginId);
   if (!secret) return false;
   try {
@@ -166,8 +199,11 @@ async function renewTicket(session: Session): Promise<void> {
 
 let maintaining = false;
 
-/** Ends expired sessions and renews tickets that are due. Runs on a timer and on resume. */
-export async function maintainSessions(now = Date.now()): Promise<void> {
+/**
+ * Ends expired sessions and renews tickets that are due. Runs on a timer and on resume.
+ * `renew: false` only settles expiry (signing in again where a stored password allows).
+ */
+export async function maintainSessions(now = Date.now(), { renew = true } = {}): Promise<void> {
   if (maintaining) return;
   maintaining = true;
   try {
@@ -175,7 +211,7 @@ export async function maintainSessions(now = Date.now()): Promise<void> {
       const reason = expiryReason(session, now);
       if (reason === 'ticket-expired' && (await reauthenticate(session))) continue;
       if (reason) signOut(session.loginId, reason);
-      else if (shouldRenewTicket(session, now)) await renewTicket(session);
+      else if (renew && shouldRenewTicket(session, now)) await renewTicket(session);
     }
   } finally {
     maintaining = false;
@@ -207,8 +243,11 @@ export function hydrateSessions(): Promise<void> {
       if (login && findCluster(login.clusterId)) sessions[stored.loginId] = stored;
       else void eraseSession(stored.loginId);
     }
-    useSessions.setState((state) => ({ sessions: { ...sessions, ...state.sessions }, hydrated: true }));
-    await maintainSessions();
+    useSessions.setState((state) => ({ sessions: { ...sessions, ...state.sessions } }));
+    // Settle expired sessions before anything renders, so no screen fires requests with a dead ticket.
+    await maintainSessions(Date.now(), { renew: false });
+    useSessions.setState({ hydrated: true });
+    void maintainSessions();
   })();
   return hydration;
 }

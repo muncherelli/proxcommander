@@ -12,6 +12,17 @@ interface ProfilesState {
   logins: Login[];
 }
 
+// Resolves once stored profiles have loaded, or failed to (corrupt or unreadable storage).
+let finishHydration: () => void = () => {};
+const hydrated = new Promise<void>((resolve) => {
+  finishHydration = resolve;
+});
+
+/** Whether a login survives a restart: its cluster and its username are both remembered. */
+export function isLoginPersisted(login: Login, cluster: Cluster): boolean {
+  return cluster.rememberHostnames && login.rememberUsername;
+}
+
 /**
  * Saved clusters and logins. Only clusters with `rememberHostnames`, and
  * logins with `rememberUsername` on a remembered cluster, are written to
@@ -22,12 +33,15 @@ export const useProfiles = create<ProfilesState>()(
     name: 'pc.profiles',
     version: 1,
     storage: createJSONStorage(() => appData),
+    onRehydrateStorage: () => () => finishHydration(),
     partialize: ({ clusters, logins }) => {
       const remembered = clusters.filter((cluster) => cluster.rememberHostnames);
-      const clusterIds = new Set(remembered.map((cluster) => cluster.id));
       return {
         clusters: remembered,
-        logins: logins.filter((login) => login.rememberUsername && clusterIds.has(login.clusterId)),
+        logins: logins.filter((login) => {
+          const cluster = remembered.find((candidate) => candidate.id === login.clusterId);
+          return cluster != null && isLoginPersisted(login, cluster);
+        }),
       };
     },
   }),
@@ -37,13 +51,7 @@ export const useProfiles = create<ProfilesState>()(
 export const REMEMBER_BY_DEFAULT = !isWeb;
 
 export function profilesHydrated(): Promise<void> {
-  if (useProfiles.persist.hasHydrated()) return Promise.resolve();
-  return new Promise((resolve) => {
-    const unsubscribe = useProfiles.persist.onFinishHydration(() => {
-      unsubscribe();
-      resolve();
-    });
-  });
+  return hydrated;
 }
 
 export function findCluster(clusterId: string): Cluster | undefined {
@@ -89,6 +97,16 @@ export function updateCluster(clusterId: string, patch: Partial<ClusterInput>): 
           },
     ),
   }));
+  dropOrphanedSecrets((login) => login.clusterId === clusterId);
+}
+
+/** A remembered secret is kept only while its login is remembered too. */
+function dropOrphanedSecrets(which: (login: Login) => boolean): void {
+  const { clusters, logins } = useProfiles.getState();
+  for (const login of logins.filter(which)) {
+    const cluster = clusters.find((candidate) => candidate.id === login.clusterId);
+    if (!login.rememberSecret || !cluster || !isLoginPersisted(login, cluster)) void deleteLoginSecret(login.id);
+  }
 }
 
 /** Removes the cluster and every login on it. Sessions end via the session store. */
@@ -113,7 +131,7 @@ export function updateLogin(loginId: string, patch: Partial<LoginInput>): void {
   useProfiles.setState((state) => ({
     logins: state.logins.map((login) => (login.id === loginId ? { ...login, ...patch } : login)),
   }));
-  if (patch.rememberSecret === false) void deleteLoginSecret(loginId);
+  dropOrphanedSecrets((login) => login.id === loginId);
 }
 
 export function removeLogin(loginId: string): void {

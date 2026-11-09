@@ -5,7 +5,8 @@ import type { Session } from './sessions';
 // with a per-backend index of login ids (SecureStore cannot list its keys).
 
 const INDEX_KEY = 'pc.sessions';
-const sessionKey = (loginId: string) => `pc.session.${loginId}`;
+export const SESSION_KEY_PREFIX = 'pc.session.';
+const sessionKey = (loginId: string) => `${SESSION_KEY_PREFIX}${loginId}`;
 const STORED_LEVELS: Persistence[] = ['tab', 'device'];
 
 let queue: Promise<unknown> = Promise.resolve();
@@ -29,8 +30,9 @@ async function readIndex(backend: KeyValueBackend): Promise<string[]> {
 async function setIndexed(backend: KeyValueBackend, loginId: string, value: string | null): Promise<void> {
   const index = new Set(await readIndex(backend));
   if (value == null) {
-    if (!index.delete(loginId)) return;
+    // Remove the value even when the index has lost track of it.
     await backend.removeItem(sessionKey(loginId));
+    if (!index.delete(loginId)) return;
   } else {
     index.add(loginId);
     await backend.setItem(sessionKey(loginId), value);

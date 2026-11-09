@@ -28,6 +28,7 @@ function corsHeaders(origin) {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Authorization, CSRFPreventionToken, Content-Type, Accept',
     'Access-Control-Max-Age': '600',
+    'Access-Control-Expose-Headers': 'X-PVE-Proxy-Error',
     Vary: 'Origin',
   };
 }
@@ -38,7 +39,11 @@ function parseTarget(url) {
   try {
     const origin = new URL(decodeURIComponent(match[1]));
     if (origin.protocol !== 'https:') return null;
-    return { hostname: origin.hostname.replace(/^\[|\]$/g, ''), port: Number(origin.port || 443), path: match[2] };
+    // Resolve dot segments (including encoded ones) so the path can't climb out of /api2/json/.
+    const resolved = new URL(match[2], 'https://pve.invalid');
+    if (!resolved.pathname.startsWith('/api2/json/') || /%2e/i.test(resolved.pathname)) return null;
+    const path = resolved.pathname + resolved.search;
+    return { hostname: origin.hostname.replace(/^\[|\]$/g, ''), port: Number(origin.port || 443), path };
   } catch {
     return null;
   }
@@ -82,7 +87,10 @@ const server = http.createServer((req, res) => {
   );
   upstream.on('error', (error) => {
     const message = error.message || error.code || String(error);
-    if (!res.headersSent) res.writeHead(502, message, { ...cors, 'Content-Type': 'text/plain' });
+    // Marks the proxy's own failure so the app treats it as an unreachable endpoint.
+    if (!res.headersSent) {
+      res.writeHead(502, message, { ...cors, 'Content-Type': 'text/plain', 'X-PVE-Proxy-Error': 'unreachable' });
+    }
     res.end(message);
   });
   req.pipe(upstream);

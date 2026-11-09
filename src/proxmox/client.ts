@@ -13,6 +13,8 @@ export interface PveRequestOptions {
   auth?: PveAuth;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** Safe to send again to another endpoint after a timeout. Defaults to true for GET only. */
+  idempotent?: boolean;
 }
 
 /** The server answered with an error status. */
@@ -28,9 +30,14 @@ export class PveError extends Error {
   }
 }
 
-/** The endpoint could not be reached (DNS, TLS, refused, timeout). Safe to try another. */
+/** The endpoint could not be reached (DNS, TLS, refused, timeout). */
 export class PveNetworkError extends Error {
-  constructor(message: string, readonly cause?: unknown) {
+  constructor(
+    message: string,
+    /** False when a write may already have reached the server, so another endpoint must not repeat it. */
+    readonly canFailOver: boolean,
+    readonly cause?: unknown,
+  ) {
     super(message);
     this.name = 'PveNetworkError';
   }
@@ -92,6 +99,7 @@ function authHeaders(auth: PveAuth | undefined, method: string): Record<string, 
 /** Calls one endpoint and unwraps PVE's `{ data }` envelope. */
 export async function pveRequest<T>(endpointUrl: string, path: string, options: PveRequestOptions = {}): Promise<T> {
   const { method = 'GET', params, auth, signal, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+  const idempotent = options.idempotent ?? method === 'GET';
   const query = encodeParams(params);
   const hasBody = method === 'POST' || method === 'PUT';
   const url = `${apiBase(endpointUrl)}${path}${!hasBody && query ? `?${query}` : ''}`;
@@ -115,7 +123,8 @@ export async function pveRequest<T>(endpointUrl: string, path: string, options: 
     });
   } catch (error) {
     if (signal?.aborted) throw error;
-    throw new PveNetworkError(controller.signal.aborted ? 'Request timed out' : 'Endpoint unreachable', error);
+    const timedOut = controller.signal.aborted;
+    throw new PveNetworkError(timedOut ? 'Request timed out' : 'Endpoint unreachable', idempotent || !timedOut, error);
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', forwardAbort);
@@ -124,6 +133,10 @@ export async function pveRequest<T>(endpointUrl: string, path: string, options: 
   const body = (await response.json().catch(() => null)) as
     | { data?: T; message?: string; errors?: Record<string, string> }
     | null;
+  if (response.status === 502 && response.headers.get('X-PVE-Proxy-Error')) {
+    // The dev proxy couldn't reach the host; the request may have been sent before it failed.
+    throw new PveNetworkError(response.statusText || 'Endpoint unreachable', idempotent);
+  }
   if (!response.ok) {
     // PVE puts the human-readable reason in the status line.
     const message = body?.message?.trim() || response.statusText || `HTTP ${response.status}`;
@@ -142,12 +155,12 @@ export async function withEndpointFailover<T>(
   run: (endpointUrl: string) => Promise<T>,
 ): Promise<{ result: T; endpointId: string }> {
   const ordered = [...endpoints].sort((a, b) => Number(b.id === preferredId) - Number(a.id === preferredId));
-  let lastError: unknown = new PveNetworkError('No endpoints configured');
+  let lastError: unknown = new PveNetworkError('No endpoints configured', false);
   for (const endpoint of ordered) {
     try {
       return { result: await run(endpoint.url), endpointId: endpoint.id };
     } catch (error) {
-      if (!(error instanceof PveNetworkError)) throw error;
+      if (!(error instanceof PveNetworkError) || !error.canFailOver) throw error;
       lastError = error;
     }
   }
@@ -175,7 +188,7 @@ export async function createTicket(
     username: string;
     clustername?: string;
     NeedTFA?: number;
-  }>(endpointUrl, '/access/ticket', { method: 'POST', params: { username, password }, signal });
+  }>(endpointUrl, '/access/ticket', { method: 'POST', params: { username, password }, signal, idempotent: true });
   if (data.NeedTFA) throw new PveTfaRequiredError(data.ticket);
   return {
     ticket: data.ticket,
