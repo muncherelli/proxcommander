@@ -49,7 +49,7 @@ Expo SDK 58 (React Native 0.88, React 19.3, New Architecture), React Native Reus
 
 ## Commits
 
-Conventional Commits: `type(scope): summary`, lower-case imperative summary, no trailing period. Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `style`, `revert`. Scope is optional (`feat(session): ...`, `chore(deps): ...`). PR titles follow the same format, since they become squash-merge messages. No AI attribution or co-author trailers.
+Conventional Commits, always with a scope: `type(scope): summary`, lower-case imperative summary, no trailing period. Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `style`, `revert`. The scope names the area touched, e.g. `feat(session): ...`, `fix(proxy): ...`, `chore(deps): ...`, `refactor(app): ...`. PR titles follow the same format, since they become the squash-merge commit on `trunk`. No AI attribution or co-author trailers.
 
 ## Agent skills
 
