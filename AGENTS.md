@@ -47,6 +47,10 @@ Expo SDK 58 (React Native 0.88, React 19.3, New Architecture), React Native Reus
 - PVE tickets live 2 hours; renew from 15 minutes. Client policy (idle, max age) may end a session sooner, never later.
 - Send credentials as `Authorization: PVEAuthCookie=...` / `PVEAPIToken=...` headers with `CSRFPreventionToken` on writes, never cookies.
 
+## Commits
+
+Conventional Commits: `type(scope): summary`, lower-case imperative summary, no trailing period. Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `style`, `revert`. Scope is optional (`feat(session): ...`, `chore(deps): ...`). PR titles follow the same format, since they become squash-merge messages. No AI attribution or co-author trailers.
+
 ## Agent skills
 
 Vendored in `.agents/skills/` and pinned in `skills-lock.json`: `expo-overview`, `expo-project-structure`, `expo-data-fetching`, `expo-design-system`, `expo-native-ui`, `expo-upgrade` (expo/skills), `react-native-best-practices` (callstackincubator/agent-skills), `uniwind` (uni-stack/uniwind). Restore or refresh with `pnpm dlx skills@1.7.6 experimental_install`.
