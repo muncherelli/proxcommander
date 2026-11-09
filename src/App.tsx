@@ -7,10 +7,10 @@ import { View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useUniwind } from 'uniwind';
 
-import { AppProviders } from './src/AppProviders';
-import { AddClusterScreen } from './src/screens/AddClusterScreen';
-import { ClusterScreen } from './src/screens/ClusterScreen';
-import { ClustersScreen } from './src/screens/ClustersScreen';
+import { AppProviders } from './AppProviders';
+import { AddClusterScreen } from './screens/AddClusterScreen';
+import { ClusterScreen } from './screens/ClusterScreen';
+import { ClustersScreen } from './screens/ClustersScreen';
 
 // A plain state switch until the app needs real navigation.
 type Route =

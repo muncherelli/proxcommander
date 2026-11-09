@@ -27,7 +27,7 @@ Run `pnpm typecheck` and `pnpm build:web` before calling a task done.
 
 ## Stack
 
-Expo SDK 58 (React Native 0.88, React 19.3, New Architecture), React Native Reusables on Uniwind (Tailwind v4) for UI, TanStack Query for server state, zustand for client state. Plain `App.tsx` entry; no Expo Router, so don't add it or `@expo/ui` without asking.
+Expo SDK 58 (React Native 0.88, React 19.3, New Architecture), React Native Reusables on Uniwind (Tailwind v4) for UI, TanStack Query for server state, zustand for client state. Plain `src/App.tsx` entry (`src/index.ts` registers it); no Expo Router, so don't add it or `@expo/ui` without asking.
 
 ## Architecture (`src/`)
 
