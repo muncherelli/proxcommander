@@ -1,13 +1,14 @@
 {
   "expo": {
-    "name": "proxcommander",
+    "name": "ProxCommander",
     "slug": "proxcommander",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.muncherelli.proxcommander"
     },
     "android": {
       "adaptiveIcon": {
@@ -16,10 +17,13 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.muncherelli.proxcommander"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "scheme": "proxcommander"
   }
 }
